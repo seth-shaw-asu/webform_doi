@@ -8,13 +8,15 @@
    */
   Drupal.behaviors.webformDoiLookup = {
     attach: function (context, settings) {
-      once('webform-doi-lookup', 'input#edit-doi', context).forEach(function (element) {
+      once('webform-doi-lookup', '[data-doi-field="doi"]', context).forEach(function (element) {
+        const messages = new Drupal.Message();
         let debounceTimer;
         // Listen for input changes
-        element.addEventListener('input', function () {
+        let doiInput = element.querySelector('input');
+        doiInput.addEventListener('input', function () {
           // console.log('DOI input changed:', element.value);
           clearTimeout(debounceTimer);
-          const doi = element.value.trim();
+          const doi = doiInput.value.trim();
 
           // Validate DOI format
           if (doi && isDoi(doi)) {
@@ -59,14 +61,14 @@
         if (data && data.message) {
           populateFields(input, data.message);
           console.log('DOI metadata fetched:', data.message);
-          displaySuccess(input, 'DOI metadata loaded successfully');
+          new Drupal.Message().add('DOI metadata loaded successfully', { type: 'status' });
         } else {
-          displayError(input, 'Invalid response from CrossRef API');
+          new Drupal.Message().add('Invalid response from CrossRef API', { type: 'error' });
         }
       })
       .catch(function (error) {
         input.classList.remove('loading');
-        displayError(input, 'Error fetching DOI: ' + error.message);
+        new Drupal.Message().add('Error fetching DOI: ' + error.message, { type: 'error' });
         console.error('DOI lookup error:', error);
       });
   }
@@ -79,17 +81,18 @@
 
     // TODO: Figure out how to handle repeatable fields like authors.
     try {
-      form.querySelectorAll('input[data-doi-field], textarea[data-doi-field], select[data-doi-field]').forEach(function (targetInput) {
+      form.querySelectorAll('[data-doi-field]').forEach(function (targetInput) {
         if (targetInput.dataset.doiField == 'doi') {
          return; // Skip DOI field itself
         }
         let sourceFields = targetInput.dataset.doiField.split(' ').map(f => f.trim());
-        console.log('Attempting to populate field:', targetInput.name, 'from metadata field:', sourceFields);
-        let value = '';
+        let values = [];
         sourceFields.forEach(function (fieldName) {
+          let value = '';
           let fieldPath = fieldName.split('.'); // Handle nested fields like 'published-print.date-parts'
           if (metadata.hasOwnProperty(fieldPath[0])) {
             if (fieldPath.length > 1) {
+              // Handle date parts which are arrays of arrays (e.g. "published-print": { "date-parts": [[2020, 5, 20]] })
               if (fieldPath[1] == 'date-parts' && Array.isArray(metadata[fieldPath[0]][fieldPath[1]])) {
                 metadata[fieldPath[0]][fieldPath[1]][0].forEach(function(part, index) {
                   if (index > 0) {
@@ -103,39 +106,26 @@
             } else {
               value = metadata[fieldPath[0]];
             }
-            console.log('Populating field:', targetInput.name, 'with value:', value);
-            targetInput.value = value;
-            return; // Stop after finding the first valid field
+            values.push(value);
           }
         });
+        // Multiple vs single value handling.
+        if (targetInput.classList.contains('form-type-webform-multiple')) {
+          // TODO: figure out how to add more input fields if there are more values than existing inputs.
+          let targetInputs = targetInput.querySelectorAll('input');
+          values.forEach(function (val, index) {
+            if (index < targetInputs.length) {
+              targetInputs[index].value = val;
+            }
+          });
+        } else {
+          targetInput.querySelector('input').value = values[0] ?? '';
+        }
         
       });
     } catch (e) {
       console.error('Error parsing target fields:', e);
     }
-  }
-
-  /**
-   * Display success message.
-   */
-  function displaySuccess(input, message) {
-      let messageElement = document.createElement('div');
-      messageElement.classList.add('messages', 'messages--status');
-      messageElement.innerHTML = '<em class="placeholder">' + message + '</em>';
-      input.after(messageElement);
-  }
-
-  /**
-   * Display error message.
-   */
-  function displayError(input, message) {
-    let messageElement = document.createElement('div');
-      messageElement.classList.add('messages','messages--error');
-      messageElement.innerHTML = '<em class="placeholder">' + message + '</em>';
-      input.after(messageElement);
-
-    // Ensure error messages don't auto-hide
-    // Users need to know what went wrong
   }
 
 })(Drupal, once, drupalSettings);

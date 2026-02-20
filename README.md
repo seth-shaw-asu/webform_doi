@@ -37,10 +37,10 @@ This module provides JavaScript for DOI (Digital Object Identifier) lookup with 
 3. Add a DOI field:
   1. Click "Add element"
   2. Select "Text Fiel" from the element list
-  3. Under "Advanced" > "Element Attributes" > "Element custom attributes (YAML)": add the value `data-doi-field: doi`
+  3. Under "Advanced" > "Wrapper Attributes" > "Wrapper custom attributes (YAML)": add the value `data-doi-field: doi`
 4. For each field you want to auto-populate:
   1. Add the element.
-  2. Under "Advanced" > "Element Attributes" > "Element custom attributes (YAML)": add the value `data-doi-field: YOUR-FIELD`, replacing 'YOUR-FIELD' with the DOI metadata field source. E.g. `data-doi-field: title` for the title field.
+  2. Under "Advanced" > "Wrapper Attributes" > "Wrapper custom attributes (YAML)": add the value `data-doi-field: YOUR-FIELD`, replacing 'YOUR-FIELD' with the DOI metadata field source. E.g. `data-doi-field: title` for the title field.
     - Note: Fields with multiple possible values, such as data published coming from either the print or digital can be set with multiple value:
     ```yml
     data-doi-field:
