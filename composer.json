@@ -1,0 +1,14 @@
+{
+  "name": "drupal/webform_doi",
+  "description": "Webform DOI element that fetches metadata from CrossRef API",
+  "type": "drupal-module",
+  "license": "GPL-2.0-or-later",
+  "keywords": ["drupal", "webform", "doi", "crossref"],
+  "homepage": "https://github.com/yourusername/webform-doi",
+  "support": {
+    "issues": "https://github.com/yourusername/webform-doi/issues"
+  },
+  "require": {
+    "drupal/webform": "^5.0 || ^6.0"
+  }
+}

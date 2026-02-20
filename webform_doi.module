@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * @file
+ * WebformDOI module file.
+ */
+
+
+function webform_doi_preprocess_webform(array &$variables): void {
+    \Drupal::logger('webform_doi')->notice('Preprocessing webform with ID: @id', ['@id' => $variables['element']['#webform_id']]);
+    \Drupal::logger('webform_doi')->notice('element attributes : @attributes', ['@attributes' => implode(', ', array_keys($variables['element']['#attributes']))]);
+//   if ($variables['element']['#webform_id'] === 'test_doi') {
+   if (in_array('doi-integration',$variables['element']['#attributes'])) {
+    $variables['#attached']['library'][] = 'webform_doi/doi_lookup';
+  }
+}
