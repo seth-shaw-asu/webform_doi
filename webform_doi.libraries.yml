@@ -7,4 +7,5 @@ doi_lookup:
       css/doi-lookup.css: {}
   dependencies:
     - core/drupal
-    - core/drupal.message
+    - core/drupal.debounce
+    - core/drupal.ajax
