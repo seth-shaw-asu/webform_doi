@@ -68,7 +68,7 @@ function webform_doi_ajax_populate_callback(array &$form, FormStateInterface $fo
   $doi_parents = $triggering_element['#parents'];
   $doi = $form_state->getValue($doi_parents);
   \Drupal::logger('webform_doi')->notice('DOI entered: @doi', ['@doi' => $doi]);
-  if (!empty($doi) && preg_match('/^10\.\d{4,}\/\S+/', $doi)) {
+  if (!empty($doi)) {
     try {
       $client = \Drupal::httpClient();
       $url = 'https://api.crossref.org/works/' . urlencode($doi);
@@ -120,7 +120,11 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
       foreach ($field_names as $field_name) {
         $value = webform_doi_get_value_from_metadata($metadata, trim($field_name));
         if ($value !== NULL) {
-          $values[] = $value;
+          if (is_array($value)) {
+            $values = array_merge($values, $value);
+          } else {
+            $values[] = $value;
+          }
         }
       }
       if (!empty($values)) {
@@ -133,17 +137,39 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
 
         $base_id = preg_replace('/--.+$/', '', $element['#id']);
         if ($element['#type'] === 'webform_multiple') {
-          $element['#default_value'] = $values;
-          $element['#value'] = $values;
-          $form_state->setValue($element['#parents'], $values);
-          $input_id = $base_id . '-items-0-item-';
-          $selector = '#' . $input_id;
-          $value = reset($values);
-          \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
-            '@selector' => $selector,
-            '@value' => $value,
-          ]);
-          $updates[] = ['selector' => $selector, 'value' => $value];
+          $default_value = [];
+          if (is_array($values)) {
+            foreach ($values as $index => $value) {
+              $default_value[] = ['_item_' => $value, 'weight' => $index];
+            }
+          } else {
+            $default_value = [['_item_' => $values, 'weight' => 0]];
+          }
+          $element['#default_value'] = $default_value;
+          $form_state->setValue($element['#parents'], $default_value);
+          // Update multiple items if values is an array.
+          if (is_array($values)) {
+            foreach ($values as $index => $value) {
+              $input_id = $base_id . '-items-' . $index . '-item-';
+              $selector = '#' . $input_id;
+              \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
+                '@selector' => $selector,
+                '@value' => $value,
+              ]);
+              $updates[] = ['selector' => $selector, 'value' => $value];
+            }
+          }
+          else {
+            // Fallback to single value.
+            $input_id = $base_id . '-items-0-item-';
+            $selector = '#' . $input_id;
+            $value = $values;
+            \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
+              '@selector' => $selector,
+              '@value' => $value,
+            ]);
+            $updates[] = ['selector' => $selector, 'value' => $value];
+          }
         }
         else {
           $value = reset($values);
@@ -151,7 +177,7 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
           $element['#value'] = $value;
           $form_state->setValue($element['#parents'], $value);
           // Determine input ID based on element type.
-          if (($element['#type'] ?? '') === 'textfield') {
+          if (($element['#type'] ?? '') === 'textfield' || ($element['#type'] ?? '') === 'textarea') {
             $input_id = $base_id;
           }
           else {
@@ -200,6 +226,21 @@ function webform_doi_get_value_from_metadata(array $metadata, string $field_path
         $value .= str_pad((string) $date_part, 2, '0', STR_PAD_LEFT);
       }
       return $value;
+    }
+    // Special handling for author field.
+    if ($field_path === 'author') {
+      $names = [];
+      foreach ($current as $author) {
+        $name = '';
+        if (isset($author['given'])) {
+          $name .= $author['given'] . ' ';
+        }
+        if (isset($author['family'])) {
+          $name .= $author['family'];
+        }
+        $names[] = trim($name);
+      }
+      return $names;
     }
     // For other arrays, return the first string element if available.
     foreach ($current as $item) {
