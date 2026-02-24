@@ -63,7 +63,6 @@ function webform_doi_find_doi_field(array &$elements): bool {
  * AJAX callback to fetch metadata from CrossRef and populate form fields.
  */
 function webform_doi_ajax_populate_callback(array &$form, FormStateInterface $form_state) {
-  \Drupal::logger('webform_doi')->notice('AJAX callback triggered for DOI lookup');
   $triggering_element = $form_state->getTriggeringElement();
   $doi_parents = $triggering_element['#parents'];
   $doi = $form_state->getValue($doi_parents);
@@ -152,10 +151,6 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
             foreach ($values as $index => $value) {
               $input_id = $base_id . '-items-' . $index . '-item-';
               $selector = '#' . $input_id;
-              \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
-                '@selector' => $selector,
-                '@value' => $value,
-              ]);
               $updates[] = ['selector' => $selector, 'value' => $value];
             }
           }
@@ -164,10 +159,6 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
             $input_id = $base_id . '-items-0-item-';
             $selector = '#' . $input_id;
             $value = $values;
-            \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
-              '@selector' => $selector,
-              '@value' => $value,
-            ]);
             $updates[] = ['selector' => $selector, 'value' => $value];
           }
         }
@@ -185,13 +176,8 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
             $input_id = $element['#id'] . '-0-value';
           }
           $selector = '#' . $input_id;
-          \Drupal::logger('webform_doi')->notice('Updating selector @selector with value @value', [
-            '@selector' => $selector,
-            '@value' => $value,
-          ]);
           $updates[] = ['selector' => $selector, 'value' => $value];
         }
-        \Drupal::logger('webform_doi')->notice('Element structure: @element', ['@element' => print_r($element, TRUE)]);
       }
     }
     elseif (isset($element['#type']) && $element['#type'] === 'container') {
