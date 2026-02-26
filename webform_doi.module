@@ -5,9 +5,11 @@
  * WebformDOI module file.
  */
 
+use GuzzleHttp\Exception\ClientException;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Ajax\AjaxResponse;
 use Drupal\Core\Ajax\InvokeCommand;
+use Drupal\Core\Ajax\MessageCommand;
 
 /**
  * Implements hook_form_alter().
@@ -17,14 +19,10 @@ use Drupal\Core\Ajax\InvokeCommand;
  */
 function webform_doi_form_alter(&$form, FormStateInterface $form_state, $form_id): void {
   // Only looking for webform submission forms.
-  if (strpos($form_id, 'webform_submission') === 0) {
-    // Specifically, *our* webform with the DOI lookup integration.
-    if (array_key_exists('doi-integration', $form['#attributes'])) {
-      $found = webform_doi_find_doi_field($form['elements']);
-      if ($found) {
-        $form['#attached']['library'][] = 'webform_doi/doi_lookup';
-      }
-    }
+  // Specifically, *our* webform with the DOI lookup integration.
+  if (strpos($form_id, 'webform_submission') === 0 && array_key_exists('doi-integration', $form['#attributes'])) {
+    // Recursively find the DOI field and set up AJAX on it.
+    webform_doi_find_doi_field($form['elements']);
   }
 }
 
@@ -45,13 +43,15 @@ function webform_doi_find_doi_field(array &$elements): bool {
       }
     }
     elseif ($element['#type'] === 'textfield' && $element['#wrapper_attributes']['data-doi-field'] === 'doi') {
+      // Found the DOI field, attach our library and set up AJAX.
+      $element['#attached']['library'][] = 'webform_doi/doi_lookup';
       $element['#ajax'] = [
         'callback' => 'webform_doi_ajax_populate_callback',
         'event' => 'doi_entry',
         'progress' => ['type' => 'throbber', 'message' => NULL],
       ];
       // Add a delay to debounce the AJAX calls.
-      $element['#attributes']['data-delay'] = 500;
+      $element['#attributes']['data-delay'] = 1000;
       return TRUE;
     }
   }
@@ -66,40 +66,60 @@ function webform_doi_ajax_populate_callback(array &$form, FormStateInterface $fo
   $triggering_element = $form_state->getTriggeringElement();
   $doi_parents = $triggering_element['#parents'];
   $doi = $form_state->getValue($doi_parents);
-  \Drupal::logger('webform_doi')->notice('DOI entered: @doi', ['@doi' => $doi]);
-  if (!empty($doi)) {
-    try {
-      $client = \Drupal::httpClient();
-      $url = 'https://api.crossref.org/works/' . urlencode($doi);
-      $response = $client->get($url);
-      $data = json_decode($response->getBody(), TRUE);
+  if (empty($doi)) {
+    return new AjaxResponse();
+  }
+  $ajax_response = new AjaxResponse();
+  try {
+    $client = \Drupal::httpClient();
+    $url = 'https://api.crossref.org/works/' . urlencode($doi);
+    $response = $client->get($url);
+    $data = json_decode($response->getBody(), TRUE);
 
-      if ($data && isset($data['message'])) {
-        $updates = [];
-        webform_doi_traverse_form($form['elements'], $form_state, $data['message'], $updates);
-        $ajax_response = new AjaxResponse();
-        foreach ($updates as $update) {
-          $ajax_response->addCommand(new InvokeCommand($update['selector'], 'val', [$update['value']]));
-        }
-        \Drupal::messenger()->addStatus('DOI metadata loaded successfully');
-        return $ajax_response;
+    if ($data && isset($data['message'])) {
+      $updates = [];
+      webform_doi_traverse_form($form['elements'], $form_state, $data['message'], $updates);
+
+      foreach ($updates as $update) {
+        $ajax_response->addCommand(new InvokeCommand($update['selector'], 'val', [$update['value']]));
       }
-      else {
-        \Drupal::messenger()->addError('Invalid response from CrossRef API');
-        return new AjaxResponse();
-      }
+      $ajax_response->addCommand(new MessageCommand('Metadata for DOI "' . $doi . '" has been populated.'));
+      return $ajax_response;
     }
-    catch (\Exception $e) {
-      \Drupal::messenger()->addError('Error fetching DOI: ' . $e->getMessage());
-      return new AjaxResponse();
+    else {
+      \Drupal::logger('webform_doi')->warning('Invalid response from CrossRef API for doi "@doi": @response_code', [
+        '@doi' => $doi,
+        '@response_code' => $response->getStatusCode(),
+      ]);
+      $ajax_response->addCommand(new MessageCommand('Error fetching DOI metadata for "' . $doi . '". Please check the DOI and try again.'));
+      return $response;
     }
   }
-
-  return new AjaxResponse();
+  catch (\Exception $e) {
+    $message = "Error fetching DOI metadata for DOI '" . $doi . "'. ";
+    if ($e instanceof ClientException && $e->getResponse()->getStatusCode() === 404) {
+      $message .= '<br>DOI not found. Please check the DOI and try again.';
+    }
+    else {
+      // We're not going to log every missing DOI checked,
+      // but we do want to log other types of errors.
+      \Drupal::logger('webform_doi')->warning('Error fetching DOI "@doi": @message', [
+        '@doi' => $doi,
+        '@message' => $e->getMessage(),
+      ]);
+    }
+    $ajax_response->addCommand(new MessageCommand($message));
+    return $ajax_response;
+  }
 }
 
 /**
  * Recursively find and populate fields with data-doi-field attributes.
+ *
+ * @todo Multi-valued fields, when more items are added, get some sort of
+ * hash value appended to them (e.g. --123456) which breaks our ability to
+ * match them up with the metadata. We should probably strip that off when
+ * looking for the base field name.
  */
 function webform_doi_traverse_form(array &$elements, FormStateInterface $form_state, array $metadata, array &$updates) {
   foreach ($elements as $key => &$element) {
@@ -107,81 +127,62 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
       // Skip properties starting with #.
       continue;
     }
-    if (isset($element['#wrapper_attributes']['data-doi-field']) && $element['#wrapper_attributes']['data-doi-field'] !== 'doi') {
-      if (is_array($element['#wrapper_attributes']['data-doi-field'])) {
-        $field_names = $element['#wrapper_attributes']['data-doi-field'];
-      }
-      else {
-        $field_names = [$element['#wrapper_attributes']['data-doi-field']];
-      }
-      \Drupal::logger('webform_doi')->notice('Found element with data-doi-field: @field', ['@field' => implode(', ', $field_names)]);
+    // Walk containers.
+    if (isset($element['#type']) && $element['#type'] === 'container') {
+      webform_doi_traverse_form($element, $form_state, $metadata, $updates);
+    }
+    // Check for our custom data attribute to map metadata fields.
+    elseif (isset($element['#wrapper_attributes']['data-doi-field']) && $element['#wrapper_attributes']['data-doi-field'] !== 'doi') {
+      // Grab field names as an array.
+      $field_names = (is_array($element['#wrapper_attributes']['data-doi-field'])) ? $element['#wrapper_attributes']['data-doi-field'] : [$element['#wrapper_attributes']['data-doi-field']];
       $values = [];
       foreach ($field_names as $field_name) {
         $value = webform_doi_get_value_from_metadata($metadata, trim($field_name));
         if ($value !== NULL) {
           if (is_array($value)) {
             $values = array_merge($values, $value);
-          } else {
+          }
+          else {
             $values[] = $value;
           }
         }
       }
-      if (!empty($values)) {
-        // For multiple values, join them or handle accordingly.
-        // For now, use the first value.
-        \Drupal::logger('webform_doi')->notice('Setting value for element @key: @value', [
-          '@key' => $key,
-          '@value' => implode(', ', $values),
-        ]);
+      if (empty($values)) {
+        continue;
+      }
+      $base_id = preg_replace('/--.+$/', '', $element['#id']);
+      // Multi-valued.
+      if ($element['#type'] === 'webform_multiple') {
+        $default_value = [];
+        foreach ($values as $index => $value) {
+          // Form state.
+          $default_value[] = ['_item_' => $value, 'weight' => $index];
 
-        $base_id = preg_replace('/--.+$/', '', $element['#id']);
-        if ($element['#type'] === 'webform_multiple') {
-          $default_value = [];
-          if (is_array($values)) {
-            foreach ($values as $index => $value) {
-              $default_value[] = ['_item_' => $value, 'weight' => $index];
-            }
-          } else {
-            $default_value = [['_item_' => $values, 'weight' => 0]];
-          }
-          $element['#default_value'] = $default_value;
-          $form_state->setValue($element['#parents'], $default_value);
-          // Update multiple items if values is an array.
-          if (is_array($values)) {
-            foreach ($values as $index => $value) {
-              $input_id = $base_id . '-items-' . $index . '-item-';
-              $selector = '#' . $input_id;
-              $updates[] = ['selector' => $selector, 'value' => $value];
-            }
-          }
-          else {
-            // Fallback to single value.
-            $input_id = $base_id . '-items-0-item-';
-            $selector = '#' . $input_id;
-            $value = $values;
-            $updates[] = ['selector' => $selector, 'value' => $value];
-          }
-        }
-        else {
-          $value = reset($values);
-          $element['#default_value'] = $value;
-          $element['#value'] = $value;
-          $form_state->setValue($element['#parents'], $value);
-          // Determine input ID based on element type.
-          if (($element['#type'] ?? '') === 'textfield' || ($element['#type'] ?? '') === 'textarea') {
-            $input_id = $base_id;
-          }
-          else {
-            // For other webform elements, assume single value input ID pattern.
-            $input_id = $element['#id'] . '-0-value';
-          }
+          // AJAX selector - we need to target the specific input for this item.
+          $input_id = $base_id . '-items-' . $index . '-item-';
           $selector = '#' . $input_id;
           $updates[] = ['selector' => $selector, 'value' => $value];
         }
+        $element['#default_value'] = $default_value;
+        $form_state->setValue($element['#parents'], $default_value);
       }
-    }
-    elseif (isset($element['#type']) && $element['#type'] === 'container') {
-      webform_doi_traverse_form($element, $form_state, $metadata, $updates);
+      // Single-valued.
+      else {
+        $value = reset($values);
+        $element['#default_value'] = $value;
+        $element['#value'] = $value;
+        $form_state->setValue($element['#parents'], $value);
+        // Determine input ID based on element type.
+        if (($element['#type'] ?? '') === 'textfield' || ($element['#type'] ?? '') === 'textarea') {
+          $input_id = $base_id;
+        }
+        else {
+          // For other webform elements, assume single value input ID pattern.
+          $input_id = $element['#id'] . '-0-value';
+        }
+        $selector = '#' . $input_id;
+        $updates[] = ['selector' => $selector, 'value' => $value];
+      }
     }
   }
 }
@@ -204,6 +205,7 @@ function webform_doi_get_value_from_metadata(array $metadata, string $field_path
     // Handle date-parts specifically.
     if ($part === 'date-parts' && is_array($current) && isset($current[0]) && is_array($current[0])) {
       $date_parts = $current[0];
+      // Assemble date string in YYYY-MM-DD format, padding with zeros.
       $value = '';
       foreach ($date_parts as $index => $date_part) {
         if ($index > 0) {
