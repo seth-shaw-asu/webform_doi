@@ -115,11 +115,6 @@ function webform_doi_ajax_populate_callback(array &$form, FormStateInterface $fo
 
 /**
  * Recursively find and populate fields with data-doi-field attributes.
- *
- * @todo Multi-valued fields, when more items are added, get some sort of
- * hash value appended to them (e.g. --123456) which breaks our ability to
- * match them up with the metadata. We should probably strip that off when
- * looking for the base field name.
  */
 function webform_doi_traverse_form(array &$elements, FormStateInterface $form_state, array $metadata, array &$updates) {
   foreach ($elements as $key => &$element) {
@@ -150,7 +145,6 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
       if (empty($values)) {
         continue;
       }
-      $base_id = preg_replace('/--.+$/', '', $element['#id']);
       // Multi-valued.
       if ($element['#type'] === 'webform_multiple') {
         $default_value = [];
@@ -158,9 +152,18 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
           // Form state.
           $default_value[] = ['_item_' => $value, 'weight' => $index];
 
-          // AJAX selector - we need to target the specific input for this item.
-          $input_id = $base_id . '-items-' . $index . '-item-';
-          $selector = '#' . $input_id;
+          // AJAX selector - use data-drupal-selector attribute to avoid hash issues.
+          // The data-drupal-selector attribute contains the base name without the hash
+          // that Drupal appends to ensure unique IDs in the rendered form.
+          $base_selector = $element['#attributes']['data-drupal-selector'] ?? '';
+          if ($base_selector) {
+            $selector = '[data-drupal-selector="' . $base_selector . '-items-' . $index . '-item-"]';
+          }
+          else {
+            // Fallback to ID-based selector if data-drupal-selector is not available.
+            $input_id = preg_replace('/--.+$/', '', $element['#id']) . '-items-' . $index . '-item-';
+            $selector = '#' . $input_id;
+          }
           $updates[] = ['selector' => $selector, 'value' => $value];
         }
         $element['#default_value'] = $default_value;
@@ -172,15 +175,29 @@ function webform_doi_traverse_form(array &$elements, FormStateInterface $form_st
         $element['#default_value'] = $value;
         $element['#value'] = $value;
         $form_state->setValue($element['#parents'], $value);
-        // Determine input ID based on element type.
+        // Determine selector based on element type.
         if (($element['#type'] ?? '') === 'textfield' || ($element['#type'] ?? '') === 'textarea') {
-          $input_id = $base_id;
+          // Use data-drupal-selector attribute if available for consistency.
+          $base_selector = $element['#attributes']['data-drupal-selector'] ?? '';
+          if ($base_selector) {
+            $selector = '[data-drupal-selector="' . $base_selector . '"]';
+          }
+          else {
+            $input_id = preg_replace('/--.+$/', '', $element['#id']);
+            $selector = '#' . $input_id;
+          }
         }
         else {
-          // For other webform elements, assume single value input ID pattern.
-          $input_id = $element['#id'] . '-0-value';
+          // For other webform elements, use data-drupal-selector if available.
+          $base_selector = $element['#attributes']['data-drupal-selector'] ?? '';
+          if ($base_selector) {
+            $selector = '[data-drupal-selector="' . $base_selector . '-0-value"]';
+          }
+          else {
+            $input_id = preg_replace('/--.+$/', '', $element['#id']) . '-0-value';
+            $selector = '#' . $input_id;
+          }
         }
-        $selector = '#' . $input_id;
         $updates[] = ['selector' => $selector, 'value' => $value];
       }
     }
