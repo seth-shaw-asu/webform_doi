@@ -32,6 +32,8 @@ This module provides JavaScript for DOI (Digital Object Identifier) lookup with 
 
 ### Adding a DOI Field to Your Webform
 
+Note: Configuring a webform requires the `webform_ui` module to be enabled, but is not required if you already have it configured or are importing an existing form configuration.
+
 1. Go to your webform configuration
 2. In Settings > Form > Form general settings > Form attributes > Form custom attributes (YAML): add the value `doi-integration: true`
 3. Add a DOI field:
